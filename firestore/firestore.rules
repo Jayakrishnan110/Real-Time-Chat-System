@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// NOTE: This backend accesses Firestore through the Admin SDK, which BYPASSES
+// these rules. They exist to lock down any *direct* client access to Firestore
+// (the web app never talks to Firestore directly — only through the API/socket).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Users may read the directory (to start chats) and write only their own doc.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Only participants of a conversation may read it.
+    match /conversations/{convId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow write: if false; // writes go through the backend Admin SDK only
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participants;
+        allow write: if false; // writes go through the backend Admin SDK only
+      }
+    }
+  }
+}

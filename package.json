@@ -1,0 +1,14 @@
+{
+  "name": "rtc-realtime-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-Time Chat System — run frontend + backend together",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "concurrently -n backend,frontend -c green,cyan \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "start": "concurrently -n backend,frontend -c green,cyan \"npm run start --prefix backend\" \"npm run dev --prefix frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
