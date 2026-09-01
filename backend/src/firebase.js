@@ -7,16 +7,60 @@ dotenv.config();
 //   1. FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY env vars.
 //   2. GOOGLE_APPLICATION_CREDENTIALS pointing at a service-account JSON file
 //      (admin.credential.applicationDefault() picks it up automatically).
+// A service-account private key gets mangled in several predictable ways as it
+// travels through a hosting dashboard. Each of these produces the same opaque
+// OpenSSL failure at call time -- 'error:1E08010C:DECODER routines::unsupported'
+// -- so normalize them all up front rather than guessing later.
+function normalizePrivateKey(raw) {
+  if (!raw) return null;
+  let key = raw.trim();
+
+  // A .env file lets the shell strip surrounding quotes, but dashboards such as
+  // Render store them as literal characters that then corrupt the PEM.
+  const isQuoted =
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"));
+  if (isQuoted) key = key.slice(1, -1).trim();
+
+  // Escaped newlines back to real ones. Double-escaped first: some UIs escape
+  // the value a second time on save.
+  key = key.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
+
+  // The key may have been base64-encoded to survive transport intact.
+  if (!key.includes('-----BEGIN')) {
+    const decoded = Buffer.from(key, 'base64').toString('utf8');
+    if (decoded.includes('-----BEGIN')) key = decoded.trim();
+  }
+
+  // Rebuild the PEM from scratch: strip every whitespace character out of the
+  // base64 body and re-wrap it at 64 columns. This repairs the most common
+  // corruption of all, where the newlines were flattened into spaces on paste.
+  const match = key.match(/-----BEGIN ([A-Z ]+?)-----([\s\S]*?)-----END \1-----/);
+  if (!match) return key; // Not a PEM we recognize; let the SDK report it.
+
+  const label = match[1];
+  const body = match[2].replace(/\s+/g, '');
+  const wrapped = (body.match(/.{1,64}/g) || []).join('\n');
+  return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`;
+}
+
 if (!admin.apps.length) {
   const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
+  const privateKey = normalizePrivateKey(FIREBASE_PRIVATE_KEY);
 
-  if (FIREBASE_PROJECT_ID && FIREBASE_CLIENT_EMAIL && FIREBASE_PRIVATE_KEY) {
+  if (FIREBASE_PROJECT_ID && FIREBASE_CLIENT_EMAIL && privateKey) {
+    if (!privateKey.includes('-----BEGIN')) {
+      console.error(
+        'FIREBASE_PRIVATE_KEY does not look like a PEM key: it should start ' +
+          'with -----BEGIN PRIVATE KEY----- . Copy the private_key field from ' +
+          'the service-account JSON verbatim, with no surrounding quotes.'
+      );
+    }
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: FIREBASE_PROJECT_ID,
         clientEmail: FIREBASE_CLIENT_EMAIL,
-        // In .env the newlines are escaped as \n — turn them back into real newlines.
-        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        privateKey,
       }),
     });
   } else {
