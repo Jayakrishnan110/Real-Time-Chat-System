@@ -34,6 +34,9 @@ export async function requireAuth(req, res, next) {
     req.user = await verifyToken(token);
     next();
   } catch (err) {
+    // Log the real reason (wrong project, malformed key, expired token) —
+    // the client only ever sees the generic message.
+    console.error(`requireAuth failed [${err.code || 'no-code'}]: ${err.message}`);
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -48,6 +51,9 @@ export async function socketAuth(socket, next) {
     socket.user = user;
     next();
   } catch (err) {
+    // Without this the socket just retries forever and the UI is stuck on
+    // "Reconnecting…" with no indication of why the handshake was refused.
+    console.error(`socketAuth failed [${err.code || 'no-code'}]: ${err.message}`);
     next(new Error('Invalid or expired token'));
   }
 }

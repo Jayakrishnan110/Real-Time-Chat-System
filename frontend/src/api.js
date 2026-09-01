@@ -1,4 +1,10 @@
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:4000';
+let RAW_SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:4000';
+
+// A trailing slash on the base URL produces '//api/...' and breaks Socket.IO's
+// path handling, so strip it.
+if (RAW_SERVER_URL.endsWith('/')) RAW_SERVER_URL = RAW_SERVER_URL.slice(0, -1);
+
+const SERVER_URL = RAW_SERVER_URL;
 
 async function request(path, token, options = {}) {
   const res = await fetch(`${SERVER_URL}${path}`, {

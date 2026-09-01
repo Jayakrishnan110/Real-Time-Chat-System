@@ -21,18 +21,42 @@ import {
 dotenv.config();
 
 const PORT = process.env.PORT || 4000;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+// CLIENT_ORIGIN may hold several comma-separated origins, e.g. the production
+// Vercel domain plus preview deployments and localhost for local development.
+const stripTrailingSlash = (u) => (u.endsWith('/') ? u.slice(0, -1) : u);
+
+const ALLOWED_ORIGINS = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((o) => stripTrailingSlash(o.trim()))
+  .filter(Boolean);
+
+// Shared CORS check for Express and Socket.IO. Requests with no Origin header
+// (curl, uptime pings, server-to-server) are always allowed.
+function corsOrigin(origin, callback) {
+  if (!origin) return callback(null, true);
+  const normalized = stripTrailingSlash(origin);
+  if (ALLOWED_ORIGINS.includes(normalized)) return callback(null, true);
+  console.warn(`CORS blocked origin: ${origin} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
+  return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+}
 
 const app = express();
-app.use(cors({ origin: CLIENT_ORIGIN }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json());
+
+// Landing route so opening the deployed backend URL in a browser shows that the
+// service is alive instead of Express's default "Cannot GET /".
+app.get('/', (_req, res) =>
+  res.json({ service: 'rtc-backend', status: 'ok', allowedOrigins: ALLOWED_ORIGINS })
+);
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use('/api', routes);
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: CLIENT_ORIGIN, methods: ['GET', 'POST'] },
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'], credentials: true },
 });
 
 // Validate the Firebase ID token on every socket connection.
@@ -159,7 +183,8 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`RTC backend listening on http://localhost:${PORT}`);
-  console.log(`Allowed client origin: ${CLIENT_ORIGIN}`);
+// Bind to 0.0.0.0 so cloud hosts (Render, Railway, Fly) can route traffic in.
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`RTC backend listening on port ${PORT}`);
+  console.log(`Allowed client origins: ${ALLOWED_ORIGINS.join(', ')}`);
 });
